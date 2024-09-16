@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
+
+	"github.com/St3plox/net_lab2/email"
 )
 
 const (
@@ -14,7 +15,6 @@ const (
 )
 
 func main() {
-
 	cfg := struct {
 		UserEmail string `json:"user_email"`
 		UserKey   string `json:"user_key"`
@@ -22,25 +22,37 @@ func main() {
 
 	cfgFile, err := os.ReadFile(userCfgPath)
 	if err != nil {
-		panic(fmt.Errorf("error parsing config file: %w", err))
+		panic(fmt.Errorf("error reading config file: %w", err))
 	}
 
 	err = json.Unmarshal(cfgFile, &cfg)
 	if err != nil {
-		panic(fmt.Errorf("error unmarshal: %w", err))
+		panic(fmt.Errorf("error unmarshalling config file: %w", err))
 	}
 
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", server, port))
+	mailCfg := email.ClientCfg{
+		UserEmail:      cfg.UserEmail,
+		UserPrivateKey: cfg.UserKey,
+		Address:        server,
+		Port:           port,
+	}
+
+	client, err := email.Dial(mailCfg)
 	if err != nil {
-		fmt.Println("Connection failed:", err)
+		fmt.Println("Error during connection setup:", err)
 		return
 	}
-	defer conn.Close()
+	defer client.Close()
 
-	resp, err := conn.Write([]byte("HELLO localhost"))
-	if err != nil {
-		fmt.Println(err)
+	email := email.Email{
+		To:             "stepanenkoegorengo@gmail.com",
+		Subject:        "Test Email with JPEG",
+		Body:           "This is a test email with a JPEG attachment.",
+		AttachFilePath: "assets/images.jpeg",
 	}
 
-	fmt.Println(resp)
+	err = client.SendEmail(email)
+	if err != nil {
+		fmt.Println("Error sending email:", err)
+	}
 }
