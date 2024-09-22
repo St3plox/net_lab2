@@ -4,4 +4,7 @@
 # письма.
 
 run-tm:
-	go run ./cmd
+	go run ./cmd/transmitter
+
+run-recv:
+	go run ./cmd/recv

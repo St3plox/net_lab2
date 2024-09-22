@@ -9,10 +9,12 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
-type Client struct {
+type SMTPClient struct {
 	fromEmail string
 	conn      net.Conn
 }
@@ -25,13 +27,13 @@ type ClientCfg struct {
 }
 
 type Email struct {
-	To      string
-	Subject string
-	Body    string
+	To             string
+	Subject        string
+	Body           string
 	AttachFilePath string // Path to the JPEG file to attach
 }
 
-func Dial(cfg ClientCfg) (*Client, error) {
+func Dial(cfg ClientCfg) (*SMTPClient, error) {
 	// Connect to SMTP server
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", cfg.Address, cfg.Port))
 	if err != nil {
@@ -44,33 +46,30 @@ func Dial(cfg ClientCfg) (*Client, error) {
 		return nil, fmt.Errorf("error during handshake and auth: %w", err)
 	}
 
-	return &Client{conn: conn, fromEmail: cfg.UserEmail}, nil
+	return &SMTPClient{conn: conn, fromEmail: cfg.UserEmail}, nil
 }
 
-func (c *Client) Close() error {
+func (c *SMTPClient) Close() error {
 	if err := sendCommand(c.conn, "QUIT"); err != nil {
 		return err
 	}
 	return c.conn.Close()
 }
 
-func (c *Client) SendEmail(email Email) error {
-	// Send MAIL FROM command with the correct sender email
+func (c *SMTPClient) SendEmail(email Email) error {
+
 	if err := sendCommand(c.conn, "MAIL FROM:<"+c.fromEmail+">"); err != nil {
 		return err
 	}
 
-	// Send RCPT TO command with the recipient email
 	if err := sendCommand(c.conn, "RCPT TO:<"+email.To+">"); err != nil {
 		return err
 	}
 
-	log.Println("Sending DATA")
 	if err := sendCommand(c.conn, "DATA"); err != nil {
 		return err
 	}
 
-	// Prepare MIME message with the text and JPEG attachment
 	message, err := c.buildMIMEMessage(email)
 	if err != nil {
 		return err
@@ -81,20 +80,12 @@ func (c *Client) SendEmail(email Email) error {
 		return err
 	}
 
-	// End DATA command
-	if err := sendCommand(c.conn, "."); err != nil {
-		return err
-	}
-
-
 	return nil
 }
 
-func (c *Client) buildMIMEMessage(email Email) (string, error) {
-	// Boundary for separating the parts in the email
-	boundary := "my-boundary-123"
+func (c *SMTPClient) buildMIMEMessage(email Email) (string, error) {
+	boundary := "boundary"
 
-	// Build the MIME message
 	var message strings.Builder
 
 	// Headers
@@ -103,30 +94,28 @@ func (c *Client) buildMIMEMessage(email Email) (string, error) {
 	message.WriteString("Subject: " + email.Subject + "\r\n")
 	message.WriteString("MIME-Version: 1.0\r\n")
 	message.WriteString("Content-Type: multipart/mixed; boundary=" + boundary + "\r\n")
-	message.WriteString("\r\n")
 
-	// Body (text part)
-	message.WriteString("--" + boundary + "\r\n")
-	message.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
-	message.WriteString("\r\n")
-	message.WriteString(email.Body + "\r\n")
-	message.WriteString("\r\n")
+	// Prepare the body first to calculate its length
+	body := fmt.Sprintf("--%s\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n", boundary)
+	body += "Content-Disposition: inline\r\n\r\n"
+	body += email.Body + "\r\n\r\n"
+	message.WriteString(body)
 
-	// JPEG attachment part
-	message.WriteString("--" + boundary + "\r\n")
-	message.WriteString("Content-Type: image/jpeg\r\n")
+	message.WriteString(fmt.Sprintf("--%s\r\nContent-Type: image/jpeg\r\n", boundary))
 	message.WriteString("Content-Transfer-Encoding: base64\r\n")
-	message.WriteString("Content-Disposition: attachment; filename=\"image.jpg\"\r\n")
-	message.WriteString("\r\n")
+	message.WriteString("Content-Disposition: attachment; filename=\"" + filepath.Base(email.AttachFilePath) + "\"\r\n\r\n")
 
-	// Read and encode the JPEG image as base64
+	// Read and encode the JPEG image as base64 with proper line wrapping
 	err := attachJPEG(&message, email.AttachFilePath)
 	if err != nil {
 		return "", fmt.Errorf("error attaching jpeg: %w", err)
 	}
 
+	message.WriteString("\n\r\n\r")
 	// End boundary
-	message.WriteString("\r\n--" + boundary + "--\r\n")
+	message.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+
+	message.WriteString("\r\n" + ".")
 
 	return message.String(), nil
 }
@@ -152,52 +141,51 @@ func attachJPEG(builder *strings.Builder, filePath string) error {
 }
 
 func sayHelloAndAuth(conn net.Conn, cfg ClientCfg) (net.Conn, error) {
-	// Read server greeting
+
 	if err := sendCommand(conn, ""); err != nil {
 		return nil, err
 	}
 
-	// Send HELO command
-	if err := sendCommand(conn, "HELO localhost"); err != nil {
+	if err := sendCommand(conn, "EHLO gsmtp"); err != nil {
 		return nil, err
 	}
 
-	// Start TLS
 	if err := sendCommand(conn, "STARTTLS"); err != nil {
 		return nil, err
 	}
 
-	// Upgrade the connection to TLS
 	tlsConn := tls.Client(conn, &tls.Config{
-		InsecureSkipVerify: true, // This skips certificate verification (for dev purposes only)
+		InsecureSkipVerify: true,
 	})
 
-	// Send AUTH LOGIN
 	if err := sendCommand(tlsConn, "AUTH LOGIN"); err != nil {
 		return nil, err
 	}
 
-	// Send base64-encoded username
 	encodedUsername := base64.StdEncoding.EncodeToString([]byte(cfg.UserEmail))
 	if err := sendCommand(tlsConn, encodedUsername); err != nil {
 		return nil, err
 	}
 
-	// Send base64-encoded password
 	encodedPassword := base64.StdEncoding.EncodeToString([]byte(cfg.UserPrivateKey))
 	if err := sendCommand(tlsConn, encodedPassword); err != nil {
 		return nil, err
 	}
 
-	return tlsConn, nil // Return upgraded TLS connection
+	return tlsConn, nil
 }
 
 func sendCommand(conn net.Conn, command string) error {
-	log.Println("Executing:", command)
-	_, err := fmt.Fprintf(conn, command+"\r\n")
+	log.Println("Executing: ", command+"\r\n")
+
+	_, err := conn.Write([]byte(command + "\r\n"))
 	if err != nil {
 		return err
 	}
+
+	log.Println("sent command")
+
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	response, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return err
