@@ -20,7 +20,7 @@ func main() {
 	subject := flag.String("subject", "Test Email with JPEG", "Email subject")
 	body := flag.String("body", "This is a test email with a JPEG attachment.", "Email body")
 	filePath := flag.String("filepath", "assets/image.jpeg", "Path to the attachment file")
-	to := flag.String("to", "st3pegor@gmail.com", "Recipient email address")
+	to := flag.String("to", "sukhae83@gmail.com", "Recipient email address")
 
 	// Parse the command-line flags
 	flag.Parse()

@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	userCfgPath = "cfg/user.json"
+	userCfgPath = "cfg/receiver.json"
 	server      = "pop.gmail.com"
 	port        = 995
 )
@@ -45,7 +45,7 @@ func main() {
 	}
 	defer client.Close()
 
-	err = client.FetchLastFiveEmails()
+	err = client.FetchEmails(1)
 	if err != nil {
 		fmt.Println("Error fetching emails:", err)
 	}
